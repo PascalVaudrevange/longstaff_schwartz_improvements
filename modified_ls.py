@@ -2,8 +2,24 @@ import logging
 import math
 import matplotlib.pyplot as plt
 import numpy as np
+import scipy.stats
 import operator
 
+
+def blackScholes(s, k, sigma, r, tau, call=True):
+    ones = np.ones_like(s)
+    d1 = 1/(sigma * math.sqrt(tau)) * (np.log(s/k) + ones * (r + 0.5 * sigma**2) * tau)
+    d2 = d1 - sigma * math.sqrt(tau) * ones
+    sign = 1
+    if not call:
+        d1 = -d1
+        d2 = -d2
+        sign = -1
+    #end if
+    result = sign * (s * scipy.stats.norm.cdf(d1)
+                    - k * scipy.stats.norm.cdf(d2) * math.exp(-r * tau))
+    return result
+#end def blackScholes
 
 class AmericanOption(object):
     def __init__(self, S0=1.0
@@ -189,7 +205,9 @@ class AmericanOption(object):
 
         v = np.zeros_like(x)
         c = np.zeros_like(x)
-
+        bs = blackScholes
+        my_cont_val = np.zeros_like(x)
+        my_cont_val_low = np.zeros_like(x)
         if compute_beta:
             beta_list = np.zeros([self.n_timestep, self.order])
             logmessage = 'Computing betas, timestep'
@@ -216,8 +234,15 @@ class AmericanOption(object):
                                              , self.order-1)
             #end if
             c[t, :] = np.polyval(beta_list[t, :], x[t, :])
+            # S - K <= Call - Put <= S - K * exp(-r *tau)
+            my_cont_val_low[t, :] = bs(x[t, :], self.K, self.sigma, self.r, self.T - t*self.dt, call=True)
+            my_cont_val[t, :] = (my_cont_val_low[t, :]
+                              + self.K * math.exp(-self.r * (self.T - t * self.dt)) - x[t, :])
 
-            ind = h[t, :] > np.maximum(c[t, :], 0.0)
+            ind = h[t, :] > np.maximum(my_cont_val[t, :], c[t,:])
+
+            print t, sum(0 > c[t,:]), sum(my_cont_val[t,: ] > c[t, :])
+            ind = h[t, :] > np.maximum(0.0, c[t,:])
             if any(ind):
                 v[t, ind] = h[t, ind]
             #end if
@@ -229,13 +254,8 @@ class AmericanOption(object):
 
         npv = np.mean(v[0, :])
         stddev = np.std(v[0, :])/np.sqrt(len(v[0, :]))
-        result = {'npv': npv
-                , 'stddev': stddev
-                , 'beta': beta_list
-                , 'v': v
-                , 'h': h
-                , 'c': c
-                , 'x': x}
+        result = dict(npv=npv, stddev=stddev, beta=beta_list, v=v, h=h,
+                      c=c, x=x, my_cont_val=my_cont_val)
         return result
     #end def __evolve
 
@@ -413,7 +433,7 @@ def section1_2_1():
                     , result['stddev'])
     return result
 #end def section1_2_1
-
+section1_2_1()
 
 def section1_2_2(n_runs=100):
     option = AmericanOption(use_independent_paths=True
@@ -546,3 +566,6 @@ plt.show()
 plt.hold(False)
 """
 #end def plot_hist
+
+
+
